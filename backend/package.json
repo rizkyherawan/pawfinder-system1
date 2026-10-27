@@ -1,0 +1,14 @@
+{
+  "name": "pawfinder-backend",
+  "version": "1.2.0",
+  "description": "Backend PawFinder - REST API, ingest telemetri IoT, geofencing, dan live stream (SSE). Tanpa dependensi eksternal.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seed.js --reset",
+    "test": "node test/smoke.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
