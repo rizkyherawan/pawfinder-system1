@@ -40,6 +40,15 @@ abstract class DataSource {
   Future<void> setDeviceInterval(String petId, int sec);
   Future<String> pingDevice(String petId);
 
+  /// Data langsung dari alat (paket terakhir, sumber USB/jaringan, fix GPS, sensor).
+  Future<DeviceLive> getDeviceLive(String petId);
+
+  /// Alat yang sudah mengirim data tetapi belum dipasangkan (pairing sekali ketuk).
+  Future<List<DiscoveredDevice>> getDiscoveredDevices();
+
+  /// Status tautan kabel USB di server.
+  Future<UsbStatus> getUsbStatus();
+
   // Geofence
   Future<Geofence> getGeofence(String petId);
   Future<Geofence> saveGeofence(Geofence g);

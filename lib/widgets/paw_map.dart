@@ -6,22 +6,28 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart' as fm;
+import 'package:latlong2/latlong.dart' as ll;
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gm;
 import 'package:provider/provider.dart';
 
-import '../core/constants.dart';
 import '../core/geo.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
 import 'buttons.dart';
 import 'map_view.dart';
+import 'osm_map.dart';
 import 'pet_art.dart';
 import 'pet_face.dart';
 
 /// Penanda hewan pada peta.
 class PawPin {
-  const PawPin({required this.pet, required this.point, this.size = 88, this.compact = false});
+  const PawPin(
+      {required this.pet,
+      required this.point,
+      this.size = 88,
+      this.compact = false});
   final Pet pet;
   final GeoPoint point;
   final double size;
@@ -30,6 +36,7 @@ class PawPin {
 
 /// Pengendali peta: sama untuk Google Maps maupun peta ilustratif (cadangan).
 class PawMapController {
+  fm.MapController? osm;
   final PFMapController ill = PFMapController();
   gm.GoogleMapController? _g;
   double baseMetersWide = 340; // dipakai peta ilustratif
@@ -39,6 +46,11 @@ class PawMapController {
   void detach() => _g = null;
 
   Future<void> zoomIn() async {
+    if (osm != null) {
+      final c = osm!;
+      c.move(c.camera.center, (c.camera.zoom + 1).clamp(3.0, 19.0).toDouble());
+      return;
+    }
     final g = _g;
     if (g == null) {
       ill.zoomBy(1.4);
@@ -50,6 +62,11 @@ class PawMapController {
   }
 
   Future<void> zoomOut() async {
+    if (osm != null) {
+      final c = osm!;
+      c.move(c.camera.center, (c.camera.zoom - 1).clamp(3.0, 19.0).toDouble());
+      return;
+    }
     final g = _g;
     if (g == null) {
       ill.zoomBy(1 / 1.4);
@@ -61,6 +78,11 @@ class PawMapController {
   }
 
   Future<void> moveTo(GeoPoint p) async {
+    if (osm != null) {
+      final c = osm!;
+      c.move(ll.LatLng(p.lat, p.lng), c.camera.zoom);
+      return;
+    }
     final g = _g;
     if (g == null) {
       ill.reset();
@@ -74,14 +96,36 @@ class PawMapController {
   /// Dipanggil setelah slider radius dilepas: zoom keluar HANYA bila lingkaran tidak lagi muat di layar.
   /// Selama slider digeser kamera tidak berubah, sehingga lingkaran terlihat membesar/mengecil sesuai radius.
   Future<void> ensureCircleVisible(GeoPoint c, double radius) async {
+    if (osm != null) {
+      final m = osm!;
+      final points = [
+        for (final angle in [0.0, math.pi / 2, math.pi, 3 * math.pi / 2])
+          movePoint(c, angle, radius)
+      ];
+      final bounds = fm.LatLngBounds.fromPoints(
+          [for (final p in points) ll.LatLng(p.lat, p.lng)]);
+      if (!points.every(
+          (p) => m.camera.visibleBounds.contains(ll.LatLng(p.lat, p.lng)))) {
+        m.fitCamera(fm.CameraFit.bounds(
+            bounds: bounds, padding: const EdgeInsets.all(40)));
+      }
+      return;
+    }
     final g = _g;
     if (g != null) {
       try {
         final vis = await g.getVisibleRegion();
-        final n = movePoint(c, 0, radius), e = movePoint(c, math.pi / 2, radius), s = movePoint(c, math.pi, radius), w = movePoint(c, 3 * math.pi / 2, radius);
+        final n = movePoint(c, 0, radius),
+            e = movePoint(c, math.pi / 2, radius),
+            s = movePoint(c, math.pi, radius),
+            w = movePoint(c, 3 * math.pi / 2, radius);
         bool inside(GeoPoint p) => vis.contains(gm.LatLng(p.lat, p.lng));
         if (!(inside(n) && inside(e) && inside(s) && inside(w))) {
-          await g.animateCamera(gm.CameraUpdate.newLatLngBounds(gm.LatLngBounds(southwest: gm.LatLng(s.lat, w.lng), northeast: gm.LatLng(n.lat, e.lng)), 48));
+          await g.animateCamera(gm.CameraUpdate.newLatLngBounds(
+              gm.LatLngBounds(
+                  southwest: gm.LatLng(s.lat, w.lng),
+                  northeast: gm.LatLng(n.lat, e.lng)),
+              48));
         }
       } catch (_) {}
     } else if (size != Size.zero) {
@@ -117,7 +161,8 @@ class PawMap extends StatefulWidget {
   final List<PawPin> pins;
   final Geofence? fence;
   final double initialZoom;
-  final double? fitRadius; // jika diisi: zoom awal diatur agar lingkaran dengan radius ini muat
+  final double?
+      fitRadius; // jika diisi: zoom awal diatur agar lingkaran dengan radius ini muat
   final double bottomPadding;
   final ValueChanged<GeoPoint>? onLongPress;
   final bool showHome, interactive;
@@ -131,11 +176,21 @@ class _PawMapState extends State<PawMap> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.select<AppState, String>((s) => s.settings.mapProvider);
+    final provider =
+        context.select<AppState, String>((s) => s.settings.mapProvider);
     return LayoutBuilder(builder: (context, bc) {
       widget.controller.size = bc.biggest;
-      if (provider == 'google' && AppConfig.googleMapsSupported) {
-        return _GoogleMapView(map: widget, size: bc.biggest);
+      if (provider == 'google') {
+        return OSMMap(
+            fitRadius: widget.fitRadius,
+            onLongPress: widget.onLongPress,
+            showHome: widget.showHome,
+            interactive: widget.interactive,
+            fence: widget.fence,
+            controller: widget.controller,
+            center: widget.center,
+            pins: widget.pins,
+            initialZoom: widget.initialZoom);
       }
       _base ??= widget.fitRadius != null ? widget.fitRadius! * 2 / 0.62 : 340;
       widget.controller.baseMetersWide = _base!;
@@ -154,7 +209,10 @@ class _PawMapState extends State<PawMap> {
               id: pin.pet.id,
               point: pin.point,
               size: pin.size,
-              child: Center(child: pin.compact ? PetFace(pet: pin.pet, size: 36, ring: true) : MapPetPin(pet: pin.pet, size: pin.size - 8)),
+              child: Center(
+                  child: pin.compact
+                      ? PetFace(pet: pin.pet, size: 36, ring: true)
+                      : MapPetPin(pet: pin.pet, size: pin.size - 8)),
             ),
         ],
       );
@@ -202,11 +260,18 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
     super.initState();
     var zoom = m.initialZoom;
     if (m.fitRadius != null) {
-      final side = math.min(widget.size.width, math.max(120.0, widget.size.height - m.bottomPadding));
-      final mpp = (2 * m.fitRadius! * 1.5) / side; // meter per piksel yang diinginkan
-      zoom = (math.log(156543.03392 * math.cos(m.center.lat * math.pi / 180) / mpp) / math.ln2).clamp(3.0, 19.0).toDouble();
+      final side = math.min(widget.size.width,
+          math.max(120.0, widget.size.height - m.bottomPadding));
+      final mpp =
+          (2 * m.fitRadius! * 1.5) / side; // meter per piksel yang diinginkan
+      zoom = (math.log(
+                  156543.03392 * math.cos(m.center.lat * math.pi / 180) / mpp) /
+              math.ln2)
+          .clamp(3.0, 19.0)
+          .toDouble();
     }
-    _initial = gm.CameraPosition(target: gm.LatLng(m.center.lat, m.center.lng), zoom: zoom);
+    _initial = gm.CameraPosition(
+        target: gm.LatLng(m.center.lat, m.center.lng), zoom: zoom);
     _syncTracks();
     _ensureTimer();
   }
@@ -249,9 +314,12 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
       _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
         final now = DateTime.now();
         for (final t in _tracks.values) {
-          final p = (now.difference(t.start).inMilliseconds / 900).clamp(0.0, 1.0).toDouble();
+          final p = (now.difference(t.start).inMilliseconds / 900)
+              .clamp(0.0, 1.0)
+              .toDouble();
           final e = Curves.easeInOut.transform(p);
-          t.cur = GeoPoint(t.from.lat + (t.to.lat - t.from.lat) * e, t.from.lng + (t.to.lng - t.from.lng) * e);
+          t.cur = GeoPoint(t.from.lat + (t.to.lat - t.from.lat) * e,
+              t.from.lng + (t.to.lng - t.from.lng) * e);
         }
         _phase = (now.millisecondsSinceEpoch % 2000) / 2000;
         if (mounted) setState(() {});
@@ -263,7 +331,8 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
   }
 
   // ---- ikon marker ----
-  String _petKey(PawPin pin, Uint8List? photo, bool dark) => '${pin.pet.species.name}|${pin.pet.avatarColor}|${pin.pet.photoVersion}|${photo != null}|${pin.compact}|${pin.pet.device.online}|$dark';
+  String _petKey(PawPin pin, Uint8List? photo, bool dark) =>
+      '${pin.pet.species.name}|${pin.pet.avatarColor}|${pin.pet.photoVersion}|${photo != null}|${pin.compact}|${pin.pet.device.online}|$dark';
 
   void _prepareIcons(AppState app, bool dark) {
     final jobs = <String, Future<gm.BitmapDescriptor>>{};
@@ -271,10 +340,16 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
       final photo = app.photoBytes(pin.pet);
       final key = _petKey(pin, photo, dark);
       if (_icons.containsKey(key) || _building.contains(key)) continue;
-      jobs[key] = _MarkerIcons.pet(pin.pet, photo, size: pin.compact ? 40 : 56, dim: !pin.pet.device.online, dark: dark);
+      jobs[key] = _MarkerIcons.pet(pin.pet, photo,
+          size: pin.compact ? 40 : 56, dim: !pin.pet.device.online, dark: dark);
     }
     final homeKey = 'home|$dark';
-    if (m.fence != null && m.showHome && !_icons.containsKey(homeKey) && !_building.contains(homeKey)) jobs[homeKey] = _MarkerIcons.home(dark: dark);
+    if (m.fence != null &&
+        m.showHome &&
+        !_icons.containsKey(homeKey) &&
+        !_building.contains(homeKey)) {
+      jobs[homeKey] = _MarkerIcons.home(dark: dark);
+    }
     if (jobs.isEmpty) return;
     _building.addAll(jobs.keys);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -296,14 +371,22 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
         markerId: gm.MarkerId('pet-${pin.pet.id}'),
         position: gm.LatLng(p.lat, p.lng),
         anchor: const Offset(0.5, 0.5),
-        icon: _icons[_petKey(pin, app.photoBytes(pin.pet), dark)] ?? gm.BitmapDescriptor.defaultMarker,
+        icon: _icons[_petKey(pin, app.photoBytes(pin.pet), dark)] ??
+            gm.BitmapDescriptor.defaultMarker,
         infoWindow: gm.InfoWindow(title: pin.pet.name),
       ));
     }
     final f = m.fence;
     if (f != null && m.showHome) {
       final icon = _icons['home|$dark'];
-      if (icon != null) out.add(gm.Marker(markerId: const gm.MarkerId('home'), position: gm.LatLng(f.center.lat, f.center.lng), anchor: const Offset(0.5, 0.5), icon: icon, consumeTapEvents: true));
+      if (icon != null) {
+        out.add(gm.Marker(
+            markerId: const gm.MarkerId('home'),
+            position: gm.LatLng(f.center.lat, f.center.lng),
+            anchor: const Offset(0.5, 0.5),
+            icon: icon,
+            consumeTapEvents: true));
+      }
     }
     return out;
   }
@@ -355,9 +438,13 @@ class _GoogleMapViewState extends State<_GoogleMapView> {
       zoomGesturesEnabled: m.interactive,
       padding: EdgeInsets.only(bottom: m.bottomPadding),
       style: dark ? _darkStyle : null,
-      onLongPress: m.onLongPress == null ? null : (p) => m.onLongPress!(GeoPoint(p.latitude, p.longitude)),
+      onLongPress: m.onLongPress == null
+          ? null
+          : (p) => m.onLongPress!(GeoPoint(p.latitude, p.longitude)),
       // Peta di dalam ListView harus menerima gestur geser lebih dulu.
-      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer())},
+      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+        Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer())
+      },
     );
   }
 }
@@ -366,7 +453,8 @@ class _MarkerIcons {
   static const double ratio = 3.0;
 
   /// Marker avatar bulat (foto atau ilustrasi) dengan cincin biru, digambar langsung ke bitmap.
-  static Future<gm.BitmapDescriptor> pet(Pet pet, Uint8List? photo, {required double size, required bool dim, required bool dark}) async {
+  static Future<gm.BitmapDescriptor> pet(Pet pet, Uint8List? photo,
+      {required double size, required bool dim, required bool dark}) async {
     final px = size * ratio;
     final rec = ui.PictureRecorder();
     final c = Canvas(rec, Rect.fromLTWH(0, 0, px, px));
@@ -375,26 +463,43 @@ class _MarkerIcons {
     c.drawCircle(Offset(r, r), r, Paint()..color = accent.o(0.22));
     final ro = r * 0.80;
     c.drawCircle(Offset(r, r), ro, Paint()..color = Colors.white);
-    c.drawCircle(Offset(r, r), ro, Paint()..color = accent..style = PaintingStyle.stroke..strokeWidth = px * 0.05);
+    c.drawCircle(
+        Offset(r, r),
+        ro,
+        Paint()
+          ..color = accent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = px * 0.05);
     final ra = ro - px * 0.05;
     final rect = Rect.fromCircle(center: Offset(r, r), radius: ra);
     c.save();
     c.clipPath(Path()..addOval(rect));
     if (photo != null) {
-      final codec = await ui.instantiateImageCodec(photo, targetWidth: (ra * 2).round());
+      final codec =
+          await ui.instantiateImageCodec(photo, targetWidth: (ra * 2).round());
       final img = (await codec.getNextFrame()).image;
       final side = math.min(img.width, img.height).toDouble();
-      final src = Rect.fromCenter(center: Offset(img.width / 2, img.height / 2), width: side, height: side);
-      c.drawImageRect(img, src, rect, Paint()..filterQuality = FilterQuality.medium);
+      final src = Rect.fromCenter(
+          center: Offset(img.width / 2, img.height / 2),
+          width: side,
+          height: side);
+      c.drawImageRect(
+          img, src, rect, Paint()..filterQuality = FilterQuality.medium);
     } else {
-      c.drawRect(rect, Paint()..color = (dark ? kAvatarBgsDark : kAvatarBgsLight)[pet.avatarColor.abs() % 6]);
+      c.drawRect(
+          rect,
+          Paint()
+            ..color = (dark
+                ? kAvatarBgsDark
+                : kAvatarBgsLight)[pet.avatarColor.abs() % 6]);
       c.translate(rect.left, rect.top);
       PetPainter(pet.species).paint(c, Size(ra * 2, ra * 2));
     }
     c.restore();
     final image = await rec.endRecording().toImage(px.round(), px.round());
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    return gm.BitmapDescriptor.bytes(data!.buffer.asUint8List(), imagePixelRatio: ratio);
+    return gm.BitmapDescriptor.bytes(data!.buffer.asUint8List(),
+        imagePixelRatio: ratio);
   }
 
   /// Penanda pusat geofence (ikon rumah).
@@ -402,24 +507,38 @@ class _MarkerIcons {
     final px = 40 * ratio;
     final rec = ui.PictureRecorder();
     final c = Canvas(rec, Rect.fromLTWH(0, 0, px, px));
-    final rr = RRect.fromRectAndRadius(Rect.fromLTWH(px * 0.08, px * 0.08, px * 0.84, px * 0.84), Radius.circular(px * 0.26));
+    final rr = RRect.fromRectAndRadius(
+        Rect.fromLTWH(px * 0.08, px * 0.08, px * 0.84, px * 0.84),
+        Radius.circular(px * 0.26));
     c.drawShadow(Path()..addRRect(rr), Colors.black, 3, false);
-    c.drawRRect(rr, Paint()..color = dark ? const Color(0xFF131C36) : Colors.white);
+    c.drawRRect(
+        rr, Paint()..color = dark ? const Color(0xFF131C36) : Colors.white);
     const icon = Icons.home_outlined;
     final tp = TextPainter(
-      text: TextSpan(text: String.fromCharCode(icon.codePoint), style: TextStyle(fontSize: px * 0.52, fontFamily: icon.fontFamily, package: icon.fontPackage, color: PF.primary)),
+      text: TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+              fontSize: px * 0.52,
+              fontFamily: icon.fontFamily,
+              package: icon.fontPackage,
+              color: PF.primary)),
       textDirection: TextDirection.ltr,
     )..layout();
     tp.paint(c, Offset((px - tp.width) / 2, (px - tp.height) / 2));
     final image = await rec.endRecording().toImage(px.round(), px.round());
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    return gm.BitmapDescriptor.bytes(data!.buffer.asUint8List(), imagePixelRatio: ratio);
+    return gm.BitmapDescriptor.bytes(data!.buffer.asUint8List(),
+        imagePixelRatio: ratio);
   }
 }
 
-/// Kontrol zoom + / − (dan tombol pusatkan) untuk kedua jenis peta.
+/// Kontrol zoom + / ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ (dan tombol pusatkan) untuk kedua jenis peta.
 class MapZoomControls extends StatelessWidget {
-  const MapZoomControls({super.key, required this.controller, this.onLocate, this.showLocate = true});
+  const MapZoomControls(
+      {super.key,
+      required this.controller,
+      this.onLocate,
+      this.showLocate = true});
   final PawMapController controller;
   final VoidCallback? onLocate;
   final bool showLocate;
@@ -428,14 +547,34 @@ class MapZoomControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pf;
     return Container(
-      decoration: BoxDecoration(color: p.surface, borderRadius: BorderRadius.circular(18), boxShadow: softShadow(p), border: Border.all(color: p.border)),
+      decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: softShadow(p),
+          border: Border.all(color: p.border)),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        PFIconButton(icon: Icons.add_rounded, label: 'Perbesar peta', border: false, background: Colors.transparent, onTap: controller.zoomIn),
+        PFIconButton(
+            icon: Icons.add_rounded,
+            label: 'Perbesar peta',
+            border: false,
+            background: Colors.transparent,
+            onTap: controller.zoomIn),
         Container(width: 24, height: 1, color: p.border),
-        PFIconButton(icon: Icons.remove_rounded, label: 'Perkecil peta', border: false, background: Colors.transparent, onTap: controller.zoomOut),
+        PFIconButton(
+            icon: Icons.remove_rounded,
+            label: 'Perkecil peta',
+            border: false,
+            background: Colors.transparent,
+            onTap: controller.zoomOut),
         if (showLocate) ...[
           Container(width: 24, height: 1, color: p.border),
-          PFIconButton(icon: Icons.my_location_rounded, label: 'Pusatkan peta', border: false, background: Colors.transparent, color: PF.primary, onTap: onLocate),
+          PFIconButton(
+              icon: Icons.my_location_rounded,
+              label: 'Pusatkan peta',
+              border: false,
+              background: Colors.transparent,
+              color: PF.primary,
+              onTap: onLocate),
         ],
       ]),
     );

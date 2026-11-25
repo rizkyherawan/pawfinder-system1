@@ -24,9 +24,15 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(seconds: 3), () {
-      if (mounted) context.read<AppState>().markSplashElapsed();
-    });
+    _timer = Timer(AppConfig.splashDuration, _skip);
+  }
+
+  /// Dipanggil saat waktu habis atau pengguna mengetuk layar: langsung ke dashboard.
+  /// Bila data awal belum selesai dimuat, dashboard tampil begitu data siap (spinner tetap berputar).
+  void _skip() {
+    if (!mounted) return;
+    _timer?.cancel();
+    context.read<AppState>().markSplashElapsed();
   }
 
   @override
@@ -42,8 +48,12 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     final p = context.pf;
     final tx = context.tx;
+    final waiting = context.select<AppState, bool>((s) => s.splashDone && !s.ready);
     return Scaffold(
-      body: Container(
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _skip,
+        child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -57,6 +67,21 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             padding: const EdgeInsets.symmetric(horizontal: 28),
             child: Column(
               children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Semantics(
+                    button: true,
+                    label: 'Lewati ke dashboard',
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(color: PF.primary.o(p.isDark ? 0.22 : 0.12), borderRadius: BorderRadius.circular(20)),
+                        child: Text('Lewati', style: tx.caption.copyWith(color: p.primaryText, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ),
+                ),
                 const Spacer(flex: 2),
                 FadeTransition(
                   opacity: _in(0, 0.5),
@@ -94,11 +119,14 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                 ),
                 const Spacer(),
                 const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.6, valueColor: AlwaysStoppedAnimation<Color>(PF.primary))),
-                const SizedBox(height: 24),
+                const SizedBox(height: 12),
+                Text(waiting ? 'Menyiapkan dashboard…' : 'Ketuk di mana saja untuk lanjut', style: tx.caption),
+                const SizedBox(height: 18),
               ],
             ),
           ),
         ),
+      ),
       ),
     );
   }

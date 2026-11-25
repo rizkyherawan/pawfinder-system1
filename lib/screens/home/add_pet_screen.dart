@@ -23,7 +23,7 @@ class _AddPetScreenState extends State<AddPetScreen> {
   int _species = 0;
   int _gender = 0;
   DateTime? _birth;
-  String? _nameErr;
+  String? _nameErr, _birthErr;
   bool _saving = false;
 
   @override
@@ -33,14 +33,21 @@ class _AddPetScreenState extends State<AddPetScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     FocusScope.of(context).unfocus();
     final name = _name.text.trim();
-    if (name.isEmpty || name.length > 30) {
-      setState(() => _nameErr = name.isEmpty ? 'Nama hewan wajib diisi' : 'Nama maksimal 30 karakter');
+    final nameErr = name.isEmpty ? 'Nama hewan wajib diisi' : (name.length > 30 ? 'Nama maksimal 30 karakter' : null);
+    final birthErr = _birth == null ? 'Tanggal lahir wajib diisi' : null;
+    if (nameErr != null || birthErr != null) {
+      setState(() {
+        _nameErr = nameErr;
+        _birthErr = birthErr;
+      });
       return;
     }
     setState(() {
       _nameErr = null;
+      _birthErr = null;
       _saving = true;
     });
     final app = context.read<AppState>();
@@ -67,8 +74,14 @@ class _AddPetScreenState extends State<AddPetScreen> {
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _saving = false);
-      showToast(context, errorText(e), kind: ToastKind.error);
+      setState(() {
+        _saving = false;
+        // Galat dari server yang menunjuk ke satu kolom ditampilkan tepat di bawah kolom itu.
+        if (e is ApiException && e.field == 'name') _nameErr = e.message;
+        if (e is ApiException && e.field == 'birthDate') _birthErr = e.message;
+      });
+      final inline = e is ApiException && (e.field == 'name' || e.field == 'birthDate');
+      if (!inline) showToast(context, errorText(e), kind: ToastKind.error);
     }
   }
 
@@ -108,9 +121,17 @@ class _AddPetScreenState extends State<AddPetScreen> {
                   const SizedBox(height: 8),
                   PFSegmented(items: const ['Jantan', 'Betina'], index: _gender, onChanged: (i) => setState(() => _gender = i)),
                   const SizedBox(height: 18),
-                  PFDateField(label: 'Tanggal Lahir (opsional)', value: _birth, onChanged: (d) => setState(() => _birth = d)),
+                  PFDateField(
+                    label: 'Tanggal Lahir*',
+                    value: _birth,
+                    errorText: _birthErr,
+                    onChanged: (d) => setState(() {
+                      _birth = d;
+                      _birthErr = null;
+                    }),
+                  ),
                   const SizedBox(height: 12),
-                  Text('Profil membantu kami menampilkan aktivitas yang sesuai untuk hewan kesayanganmu.', style: tx.caption),
+                  Text('Tidak tahu tanggal pastinya? Perkirakan saja. Profil membantu kami menampilkan aktivitas yang sesuai untuk hewan kesayanganmu.', style: tx.caption),
                   const SizedBox(height: 26),
                   PFButton(label: 'Simpan', loading: _saving, onPressed: _save),
                 ],

@@ -51,7 +51,9 @@ class _PFTextFieldState extends State<PFTextField> {
   @override
   void initState() {
     super.initState();
-    _focus.addListener(() => setState(() => _focused = _focus.hasFocus));
+    _focus.addListener(() {
+      if (mounted) setState(() => _focused = _focus.hasFocus);
+    });
   }
 
   @override
@@ -128,20 +130,28 @@ class _PFTextFieldState extends State<PFTextField> {
 
 /// Field tanggal: menampilkan tanggal terpilih atau placeholder, membuka date picker.
 class PFDateField extends StatelessWidget {
-  const PFDateField({super.key, this.label, this.value, this.hint = 'Pilih tanggal lahir', required this.onChanged, this.firstDate, this.lastDate});
+  const PFDateField({super.key, this.label, this.value, this.hint = 'Pilih tanggal lahir', required this.onChanged, this.firstDate, this.lastDate, this.errorText});
 
-  final String? label, hint;
+  /// Pesan galat (mis. "Tanggal lahir wajib diisi"); bila ada, bingkai menjadi merah.
+  final String? label, hint, errorText;
   final DateTime? value;
   final ValueChanged<DateTime> onChanged;
   final DateTime? firstDate, lastDate;
 
   Future<void> _pick(BuildContext context) async {
-    final now = DateTime.now();
+    // Tanggal awal HARUS berada di antara firstDate dan lastDate, kalau tidak showDatePicker melempar assertion.
+    final today = DateUtils.dateOnly(DateTime.now());
+    final first = DateUtils.dateOnly(firstDate ?? DateTime(today.year - 30));
+    var last = DateUtils.dateOnly(lastDate ?? today);
+    if (last.isBefore(first)) last = first;
+    var initial = DateUtils.dateOnly(value ?? DateTime(today.year - 1, today.month, today.day));
+    if (initial.isBefore(first)) initial = first;
+    if (initial.isAfter(last)) initial = last;
     final picked = await showDatePicker(
       context: context,
-      initialDate: value ?? DateTime(now.year - 1, now.month, now.day),
-      firstDate: firstDate ?? DateTime(now.year - 30),
-      lastDate: lastDate ?? now,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
       helpText: 'Pilih tanggal',
       cancelText: 'Batal',
       confirmText: 'Pilih',
@@ -157,6 +167,7 @@ class PFDateField extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pf;
     final tx = context.tx;
+    final hasError = errorText != null && errorText!.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -167,7 +178,7 @@ class PFDateField extends StatelessWidget {
           child: Container(
             height: 52,
             padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(color: p.surface, borderRadius: BorderRadius.circular(PF.rInput), border: Border.all(color: p.border, width: 1.2)),
+            decoration: BoxDecoration(color: p.surface, borderRadius: BorderRadius.circular(PF.rInput), border: Border.all(color: hasError ? PF.danger : p.border, width: hasError ? 1.6 : 1.2)),
             child: Row(
               children: [
                 Expanded(
@@ -181,6 +192,14 @@ class PFDateField extends StatelessWidget {
             ),
           ),
         ),
+        if (hasError) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            const Icon(Icons.error_outline_rounded, size: 14, color: PF.danger),
+            const SizedBox(width: 4),
+            Expanded(child: Text(errorText!, style: tx.caption.copyWith(color: PF.danger))),
+          ]),
+        ],
       ],
     );
   }

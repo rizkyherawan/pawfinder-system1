@@ -40,6 +40,16 @@ class PetSheet extends StatelessWidget {
     Widget action;
     switch (d.connection) {
       case 'online':
+        if (!hasLoc) {
+          // Alat hidup dan mengirim data, tetapi belum ada lokasi (mis. GPS di dalam ruangan): jangan mengaku "di dalam area aman".
+          status = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            PFBadge(label: 'Terhubung · mencari satelit GPS', color: PF.warning, background: p.warningBg, icon: Icons.satellite_alt_outlined),
+            const SizedBox(height: 10),
+            Text('Kalung aktif (${d.sourceLabel}), tetapi belum mendapat lokasi dari satelit. Bawa ke luar ruangan dengan langit terbuka; lokasi tampil otomatis.', style: tx.caption.copyWith(color: p.text)),
+          ]);
+          action = PFButton(label: 'Periksa Koneksi Alat', kind: PFButtonKind.secondary, onPressed: onConnect);
+          break;
+        }
         final dist = (hasLoc && fence != null) ? distanceMeters(fence!.center, pet.location!) : null;
         status = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           pet.isOutside
@@ -54,6 +64,10 @@ class PetSheet extends StatelessWidget {
           if (dist != null) ...[
             const SizedBox(height: 4),
             Padding(padding: const EdgeInsets.only(left: 22), child: Text('Berjarak ${fmtRadius(dist)} dari ${fence!.name}', style: tx.micro)),
+          ],
+          if (d.searchingSatellites) ...[
+            const SizedBox(height: 4),
+            Padding(padding: const EdgeInsets.only(left: 22), child: Text('GPS sedang mencari satelit; ini posisi terakhir yang diterima.', style: tx.micro.copyWith(color: PF.warning))),
           ],
         ]);
         action = PFButton(label: locationLabel, icon: locationIcon, onPressed: onLocation);

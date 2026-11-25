@@ -74,6 +74,9 @@ class DeviceInfo {
     this.connection = 'unpaired',
     this.lastSeen,
     this.intervalSec = 30,
+    this.gpsFix,
+    this.satellites,
+    this.source,
   });
 
   final String? serial, signal;
@@ -82,6 +85,17 @@ class DeviceInfo {
   final int intervalSec;
   final bool paired;
   final DateTime? lastSeen;
+
+  /// true = lokasi GPS valid pada paket terakhir · false = alat hidup tetapi belum mendapat satelit · null = belum ada paket.
+  final bool? gpsFix;
+  final int? satellites;
+
+  /// Jalur data: 'usb' (kabel), 'http' (jaringan), 'simulator' (data demo dari server), atau null.
+  final String? source;
+
+  /// Alat terhubung, tetapi belum ada lokasi (mis. di dalam ruangan).
+  bool get searchingSatellites => online && gpsFix == false;
+  String get sourceLabel => switch (source) { 'usb' => 'Kabel USB', 'http' => 'Jaringan (HTTP)', 'simulator' => 'Simulator (data demo)', _ => 'Belum ada data' };
 
   bool get online => connection == 'online';
   bool get waiting => connection == 'waiting';
@@ -99,9 +113,12 @@ class DeviceInfo {
         connection: '${j['connection'] ?? 'unpaired'}',
         lastSeen: _dt(j['lastSeen']),
         intervalSec: _i(j['intervalSec'], 30),
+        gpsFix: j['gpsFix'] is bool ? j['gpsFix'] as bool : null,
+        satellites: _iOrNull(j['satellites']),
+        source: _sOrNull(j['source']),
       );
 
-  DeviceInfo copyWith({int? battery, String? signal, String? connection, bool? paired, String? serial, DateTime? lastSeen, int? intervalSec, bool clearSerial = false}) => DeviceInfo(
+  DeviceInfo copyWith({int? battery, String? signal, String? connection, bool? paired, String? serial, DateTime? lastSeen, int? intervalSec, bool? gpsFix, int? satellites, String? source, bool clearSerial = false, bool clearLink = false}) => DeviceInfo(
         serial: clearSerial ? null : (serial ?? this.serial),
         firmware: firmware,
         battery: battery ?? this.battery,
@@ -110,6 +127,9 @@ class DeviceInfo {
         connection: connection ?? this.connection,
         lastSeen: lastSeen ?? this.lastSeen,
         intervalSec: intervalSec ?? this.intervalSec,
+        gpsFix: clearLink ? null : (gpsFix ?? this.gpsFix),
+        satellites: clearLink ? null : (satellites ?? this.satellites),
+        source: clearLink ? null : (source ?? this.source),
       );
 }
 
@@ -146,7 +166,7 @@ class Pet {
   bool get hasPhoto => photoVersion > 0;
 
   /// Hanya hewan dengan GPS online yang punya status "di dalam/di luar area aman".
-  bool get isInside => device.online && insideGeofence != false;
+  bool get isInside => device.online && insideGeofence == true;
   bool get isOutside => device.online && insideGeofence == false;
 
   factory Pet.fromJson(Map<String, dynamic> j) {
@@ -352,6 +372,141 @@ class HealthSummary {
       latestWeightKg: _dOrNull(sum['latestWeightKg']),
       lastVaccineTitle: vac == null ? null : '${vac['title']}',
       lastVaccineDate: vac == null ? null : '${vac['date']}',
+    );
+  }
+}
+
+/// Data langsung dari alat untuk layar "Koneksi Alat".
+class DeviceLive {
+  const DeviceLive({
+    this.paired = false,
+    this.serial,
+    this.connection = 'unpaired',
+    this.source,
+    this.port,
+    this.packets = 0,
+    this.lastPacketAt,
+    this.ageSec,
+    this.gpsFix,
+    this.locationMode,
+    this.satellites,
+    this.hdop,
+    this.speedKmh,
+    this.lat,
+    this.lng,
+    this.address,
+    this.battery,
+    this.signal,
+    this.heartRate,
+    this.temperature,
+    this.firmware = '',
+    this.pendingCommands = 0,
+  });
+
+  final bool paired;
+  final String? serial, source, port, locationMode, address, signal;
+  final String connection, firmware;
+  final int packets, pendingCommands;
+  final DateTime? lastPacketAt;
+  final int? ageSec, satellites, battery, heartRate;
+  final bool? gpsFix;
+  final double? hdop, speedKmh, lat, lng, temperature;
+
+  bool get online => connection == 'online';
+
+  /// 'tetap' = koordinat tetap (prototipe tanpa modul GPS), bukan hasil satelit.
+  bool get fixedLocation => locationMode == 'tetap';
+
+  factory DeviceLive.fromJson(Map<String, dynamic> j) => DeviceLive(
+        paired: j['paired'] == true,
+        serial: _sOrNull(j['serial']),
+        connection: '${j['connection'] ?? 'unpaired'}',
+        source: _sOrNull(j['source']),
+        port: _sOrNull(j['port']),
+        packets: _i(j['packets']),
+        lastPacketAt: _dt(j['lastPacketAt']),
+        ageSec: _iOrNull(j['ageSec']),
+        gpsFix: j['gpsFix'] is bool ? j['gpsFix'] as bool : null,
+        locationMode: _sOrNull(j['locationMode']),
+        satellites: _iOrNull(j['satellites']),
+        hdop: _dOrNull(j['hdop']),
+        speedKmh: _dOrNull(j['speedKmh']),
+        lat: _dOrNull(j['lat']),
+        lng: _dOrNull(j['lng']),
+        address: _sOrNull(j['address']),
+        battery: _iOrNull(j['battery']),
+        signal: _sOrNull(j['signal']),
+        heartRate: _iOrNull(j['heartRate']),
+        temperature: _dOrNull(j['temperature']),
+        firmware: '${j['firmware'] ?? ''}',
+        pendingCommands: _i(j['pendingCommands']),
+      );
+}
+
+/// Alat yang sudah mengirim paket ke server tetapi belum dipasangkan ke hewan mana pun.
+class DiscoveredDevice {
+  const DiscoveredDevice({required this.serial, this.source, this.port, this.firmware, this.battery, this.lastSeenSec = 0});
+  final String serial;
+  final String? source, port, firmware;
+  final int? battery;
+  final int lastSeenSec;
+
+  String get sourceLabel => source == 'usb' ? 'Kabel USB' : 'Jaringan';
+
+  factory DiscoveredDevice.fromJson(Map<String, dynamic> j) => DiscoveredDevice(
+        serial: '${j['serial']}',
+        source: _sOrNull(j['source']),
+        port: _sOrNull(j['port']),
+        firmware: _sOrNull(j['firmware']),
+        battery: _iOrNull(j['battery']),
+        lastSeenSec: _i(j['lastSeenSec']),
+      );
+}
+
+/// Status tautan kabel USB di sisi server.
+class UsbStatus {
+  const UsbStatus({
+    this.enabled = false,
+    this.state = 'idle',
+    this.path,
+    this.baud,
+    this.lines = 0,
+    this.parseErrors = 0,
+    this.lastError,
+    this.lastLineAgeSec,
+    this.serials = const [],
+    this.driver,
+    this.hint,
+    this.lastUnknown,
+    this.rejectCode,
+  });
+
+  final bool enabled;
+  final String state;
+  final String? path, lastError, driver, hint, lastUnknown, rejectCode;
+  final int? baud, lastLineAgeSec;
+  final int lines, parseErrors;
+  final List<String> serials;
+
+  bool get connected => enabled && state == 'connected';
+
+  factory UsbStatus.fromJson(Map<String, dynamic> j) {
+    final unknown = j['lastUnknown'] is Map ? Map<String, dynamic>.from(j['lastUnknown'] as Map) : null;
+    final reject = j['lastReject'] is Map ? Map<String, dynamic>.from(j['lastReject'] as Map) : null;
+    return UsbStatus(
+      enabled: j['enabled'] == true,
+      state: '${j['state'] ?? 'idle'}',
+      path: _sOrNull(j['path']),
+      baud: _iOrNull(j['baud']),
+      lines: _i(j['lines']),
+      parseErrors: _i(j['parseErrors']),
+      lastError: _sOrNull(j['lastError']),
+      lastLineAgeSec: _iOrNull(j['lastLineAgeSec']),
+      serials: ((j['serials'] as List?) ?? const []).map((e) => '$e').toList(),
+      driver: _sOrNull(j['driver']),
+      hint: _sOrNull(j['hint']),
+      lastUnknown: unknown == null ? null : _sOrNull(unknown['line']),
+      rejectCode: reject == null ? null : _sOrNull(reject['code']),
     );
   }
 }

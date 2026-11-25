@@ -35,18 +35,51 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  static final _emailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$');
+
+  /// Aturan kata sandi untuk PENDAFTARAN (sama dengan backend). Saat masuk cukup tidak boleh kosong.
+  static String? passwordPolicy(String p) {
+    if (p.length < 8) return 'Kata sandi minimal 8 karakter';
+    if (p.length > 128) return 'Kata sandi maksimal 128 karakter';
+    if (!RegExp(r'[A-Za-z]').hasMatch(p) || !RegExp(r'\d').hasMatch(p)) return 'Kata sandi harus mengandung huruf dan angka';
+    return null;
+  }
+
   bool _validate() {
-    final emailOk = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$').hasMatch(_email.text.trim());
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final pass = _password.text;
+    String? nameErr, emailErr, passErr;
+    if (_mode == 1) {
+      if (name.isEmpty) {
+        nameErr = 'Nama wajib diisi';
+      } else if (name.length < 2) {
+        nameErr = 'Nama minimal 2 karakter';
+      } else if (name.length > 60) {
+        nameErr = 'Nama maksimal 60 karakter';
+      }
+    }
+    if (email.isEmpty) {
+      emailErr = 'Email wajib diisi';
+    } else if (email.length > 254 || !_emailRe.hasMatch(email)) {
+      emailErr = 'Format email tidak valid';
+    }
+    if (pass.isEmpty) {
+      passErr = 'Kata sandi wajib diisi';
+    } else if (_mode == 1) {
+      passErr = passwordPolicy(pass);
+    }
     setState(() {
-      _nameErr = _mode == 1 && _name.text.trim().length < 2 ? 'Nama minimal 2 karakter' : null;
-      _emailErr = emailOk ? null : 'Format email tidak valid';
-      _passErr = _password.text.length < 6 ? 'Kata sandi minimal 6 karakter' : null;
+      _nameErr = nameErr;
+      _emailErr = emailErr;
+      _passErr = passErr;
       _banner = null;
     });
-    return _nameErr == null && _emailErr == null && _passErr == null;
+    return nameErr == null && emailErr == null && passErr == null;
   }
 
   Future<void> _submit() async {
+    if (_loading) return; // tombol Enter di keyboard tidak boleh mengirim dua kali
     FocusScope.of(context).unfocus();
     if (!_validate()) return;
     final app = context.read<AppState>();
@@ -75,57 +108,19 @@ class _AuthScreenState extends State<AuthScreen> {
           _banner = e.message;
         }
       });
+    } catch (_) {
+      if (mounted) setState(() => _banner = 'Terjadi kesalahan tak terduga. Pastikan alamat server benar, lalu coba lagi.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _fillDemo() {
-    setState(() {
-      _mode = 0;
-      _email.text = AppConfig.demoEmail;
-      _password.text = AppConfig.demoPassword;
-      _emailErr = _passErr = _banner = null;
-    });
-  }
-
   void _serverSheet() {
     final app = context.read<AppState>();
-    final ctrl = TextEditingController(text: app.baseUrl);
     showPFSheet<void>(
       context,
       title: 'Alamat Server',
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
-        var testing = false;
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Isi dengan alamat backend PawFinder. Android emulator: http://10.0.2.2:4000 · HP asli: http://IP-KOMPUTER:4000', style: ctx.tx.caption),
-          const SizedBox(height: 14),
-          PFTextField(controller: ctrl, hint: 'http://10.0.2.2:4000', keyboardType: TextInputType.url, prefixIcon: Icons.dns_outlined),
-          const SizedBox(height: 16),
-          StatefulBuilder(builder: (ctx, setBtn) {
-            return PFButton(
-              label: 'Uji Koneksi',
-              kind: PFButtonKind.secondary,
-              loading: testing,
-              onPressed: () async {
-                setBtn(() => testing = true);
-                final err = await app.testConnection(ctrl.text.trim().startsWith('http') ? ctrl.text.trim() : 'http://${ctrl.text.trim()}');
-                setBtn(() => testing = false);
-                if (!ctx.mounted) return;
-                showToast(ctx, err ?? 'Terhubung ke server PawFinder', kind: err == null ? ToastKind.success : ToastKind.error);
-              },
-            );
-          }),
-          const SizedBox(height: 10),
-          PFButton(
-            label: 'Simpan',
-            onPressed: () async {
-              await app.setBaseUrl(ctrl.text);
-              if (ctx.mounted) Navigator.of(ctx).pop();
-            },
-          ),
-        ]);
-      }),
+      builder: (ctx) => _ServerSheet(app: app),
     );
   }
 
@@ -177,23 +172,32 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: register
                           ? Padding(
                               padding: const EdgeInsets.only(bottom: 14),
-                              child: PFTextField(label: 'Nama', hint: 'Nama lengkap', controller: _name, errorText: _nameErr, prefixIcon: Icons.person_outline_rounded, textCapitalization: TextCapitalization.words, textInputAction: TextInputAction.next),
+                              child: PFTextField(label: 'Nama', hint: 'Nama lengkap', controller: _name, errorText: _nameErr, maxLength: 60, onChanged: (_) {
+          if (_nameErr != null) setState(() => _nameErr = null);
+        }, prefixIcon: Icons.person_outline_rounded, textCapitalization: TextCapitalization.words, textInputAction: TextInputAction.next),
                             )
                           : const SizedBox(width: double.infinity),
                     ),
-                    PFTextField(label: 'Email', hint: 'nama@email.com', controller: _email, errorText: _emailErr, prefixIcon: Icons.mail_outline_rounded, keyboardType: TextInputType.emailAddress, textInputAction: TextInputAction.next, autofillHints: const [AutofillHints.email]),
+                    PFTextField(label: 'Email', hint: 'nama@email.com', controller: _email, errorText: _emailErr, maxLength: 254, onChanged: (_) {
+          if (_emailErr != null) setState(() => _emailErr = null);
+        }, prefixIcon: Icons.mail_outline_rounded, keyboardType: TextInputType.emailAddress, textInputAction: TextInputAction.next, autofillHints: const [AutofillHints.email]),
                     const SizedBox(height: 14),
                     PFTextField(
                       label: 'Kata sandi',
-                      hint: 'Minimal 6 karakter',
+                      hint: register ? 'Minimal 8 karakter, huruf dan angka' : 'Masukkan kata sandi',
                       controller: _password,
                       errorText: _passErr,
+                      maxLength: 128,
+                      onChanged: (_) {
+          if (_passErr != null) setState(() => _passErr = null);
+        },
                       prefixIcon: Icons.lock_outline_rounded,
                       obscure: !_showPass,
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _submit(),
                       suffix: GestureDetector(
                         onTap: () => setState(() => _showPass = !_showPass),
+                        behavior: HitTestBehavior.opaque,
                         child: SizedBox(width: 44, height: 44, child: Icon(_showPass ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 20, color: p.textSecondary)),
                       ),
                     ),
@@ -211,10 +215,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     ],
                     const SizedBox(height: 18),
                     PFButton(label: register ? 'Buat Akun' : 'Masuk', loading: _loading, onPressed: _submit),
-                    if (!register) ...[
-                      const SizedBox(height: 8),
-                      Center(child: PFButton(label: 'Isi akun demo', kind: PFButtonKind.text, expand: false, onPressed: _fillDemo)),
-                    ],
                   ]),
                 ),
                 const SizedBox(height: 16),
@@ -250,5 +250,81 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
       ),
     );
+  }
+}
+
+/// Sheet alamat server. State (kolom, status uji, galat) disimpan di State sendiri agar tidak hilang
+/// saat keyboard muncul/hilang dan sheet dibangun ulang.
+class _ServerSheet extends StatefulWidget {
+  const _ServerSheet({required this.app});
+  final AppState app;
+
+  @override
+  State<_ServerSheet> createState() => _ServerSheetState();
+}
+
+class _ServerSheetState extends State<_ServerSheet> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.app.baseUrl);
+  bool _testing = false;
+  String? _err;
+
+  static const _invalid = 'Alamat server tidak valid. Contoh: http://192.168.1.10:4000';
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _test() async {
+    if (_testing) return;
+    if (AppState.normalizeBaseUrl(_ctrl.text) == null) {
+      setState(() => _err = _invalid);
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _err = null;
+    });
+    final err = await widget.app.testConnection(_ctrl.text);
+    if (!mounted) return;
+    setState(() => _testing = false);
+    showToast(context, err ?? 'Terhubung ke server PawFinder', kind: err == null ? ToastKind.success : ToastKind.error);
+  }
+
+  Future<void> _save() async {
+    if (AppState.normalizeBaseUrl(_ctrl.text) == null) {
+      setState(() => _err = _invalid);
+      return;
+    }
+    try {
+      await widget.app.setBaseUrl(_ctrl.text);
+    } catch (e) {
+      if (mounted) setState(() => _err = errorText(e));
+      return;
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Isi dengan alamat backend PawFinder. Android emulator: http://10.0.2.2:4000 · HP asli: http://IP-KOMPUTER:4000', style: context.tx.caption),
+      const SizedBox(height: 14),
+      PFTextField(
+        controller: _ctrl,
+        hint: 'http://10.0.2.2:4000',
+        errorText: _err,
+        keyboardType: TextInputType.url,
+        prefixIcon: Icons.dns_outlined,
+        onChanged: (_) {
+          if (_err != null) setState(() => _err = null);
+        },
+      ),
+      const SizedBox(height: 16),
+      PFButton(label: 'Uji Koneksi', kind: PFButtonKind.secondary, loading: _testing, onPressed: _test),
+      const SizedBox(height: 10),
+      PFButton(label: 'Simpan', onPressed: _save),
+    ]);
   }
 }

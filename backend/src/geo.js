@@ -34,12 +34,14 @@ const PLACES = [
 
 function reverseGeocode(p, home) {
   if (home && haversine(p, home) <= 60) return home.address;
-  let best = PLACES[0], bd = Infinity;
+  let best = null, bd = Infinity;
   for (const pl of PLACES) {
     const d = haversine(p, pl);
     if (d < bd) { bd = d; best = pl; }
   }
-  return `${best.name}, Yogyakarta`;
+  // Hanya klaim nama jalan bila memang dekat landmark yang dikenal; selain itu tampilkan koordinat apa adanya.
+  if (best && bd <= 3000) return `${best.name}, Yogyakarta`;
+  return `Koordinat ${p.lat.toFixed(5)} ${p.lng.toFixed(5)}`;
 }
 
 /** Tanggal kalender WIB (UTC+7) dalam format YYYY-MM-DD */

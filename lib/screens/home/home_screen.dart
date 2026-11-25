@@ -121,6 +121,11 @@ class HomeScreen extends StatelessWidget {
       note = '${outside.map((e) => e.name).join(', ')} berada di luar area aman.';
       noteColor = PF.warning;
       noteIcon = Icons.warning_amber_rounded;
+    } else if (!tracked.any((e) => e.location != null)) {
+      // Alat hidup tetapi belum ada satu pun lokasi: jangan mengklaim "di area aman".
+      note = 'Kalung terhubung, menunggu sinyal satelit GPS (bawa ke luar ruangan).';
+      noteColor = PF.warning;
+      noteIcon = Icons.satellite_alt_outlined;
     } else {
       note = 'Semua hewan yang terlacak berada di area aman.';
       noteColor = p.textSecondary;

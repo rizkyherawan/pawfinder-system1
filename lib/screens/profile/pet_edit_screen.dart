@@ -27,7 +27,7 @@ class _PetEditScreenState extends State<PetEditScreen> {
   late final TextEditingController _name;
   late int _species, _gender, _color;
   DateTime? _birth;
-  String? _nameErr;
+  String? _nameErr, _birthErr;
   bool _saving = false, _uploading = false;
   late final String _petId;
 
@@ -153,16 +153,23 @@ class _PetEditScreenState extends State<PetEditScreen> {
 
   // ---- simpan & hapus ----
   Future<void> _save() async {
+    if (_saving) return;
     FocusScope.of(context).unfocus();
     final name = _name.text.trim();
     final pet = _pet;
     if (pet == null) return;
-    if (name.isEmpty) {
-      setState(() => _nameErr = 'Nama hewan wajib diisi');
+    final nameErr = name.isEmpty ? 'Nama hewan wajib diisi' : (name.length > 30 ? 'Nama maksimal 30 karakter' : null);
+    final birthErr = _birth == null ? 'Tanggal lahir wajib diisi' : null;
+    if (nameErr != null || birthErr != null) {
+      setState(() {
+        _nameErr = nameErr;
+        _birthErr = birthErr;
+      });
       return;
     }
     setState(() {
       _nameErr = null;
+      _birthErr = null;
       _saving = true;
     });
     final app = context.read<AppState>();
@@ -180,8 +187,13 @@ class _PetEditScreenState extends State<PetEditScreen> {
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _saving = false);
-      showToast(context, errorText(e), kind: ToastKind.error);
+      setState(() {
+        _saving = false;
+        if (e is ApiException && e.field == 'name') _nameErr = e.message;
+        if (e is ApiException && e.field == 'birthDate') _birthErr = e.message;
+      });
+      final inline = e is ApiException && (e.field == 'name' || e.field == 'birthDate');
+      if (!inline) showToast(context, errorText(e), kind: ToastKind.error);
     }
   }
 
@@ -251,7 +263,15 @@ class _PetEditScreenState extends State<PetEditScreen> {
                   const SizedBox(height: 8),
                   PFSegmented(items: const ['Jantan', 'Betina'], index: _gender, onChanged: (i) => setState(() => _gender = i)),
                   const SizedBox(height: 18),
-                  PFDateField(label: 'Tanggal Lahir (opsional)', value: _birth, onChanged: (d) => setState(() => _birth = d)),
+                  PFDateField(
+                    label: 'Tanggal Lahir*',
+                    value: _birth,
+                    errorText: _birthErr,
+                    onChanged: (d) => setState(() {
+                      _birth = d;
+                      _birthErr = null;
+                    }),
+                  ),
                   if (_birth != null) ...[
                     const SizedBox(height: 8),
                     Text('Usia ${ageLong(_birth)} · per ${fmtDateLong(wibNow())}', style: tx.micro),

@@ -92,28 +92,36 @@ class AppState extends ChangeNotifier {
     _token = _store.token;
     final saved = _store.user;
 
-    if (demoMode && saved != null) {
-      _ds = DemoDataSource();
-      user = saved;
-      await _loadAll(silent: true);
-    } else if (_token != null && saved != null) {
-      _ds = RemoteDataSource(baseUrl, _token);
-      user = saved;
-      try {
+    // Apa pun yang terjadi saat memuat data (server mati, respons aneh), aplikasi HARUS tetap terbuka:
+    // `ready` selalu menjadi true agar layar splash tidak pernah macet.
+    try {
+      if (demoMode && saved != null) {
+        _ds = DemoDataSource();
+        user = saved;
         await _loadAll(silent: true);
-      } on ApiException catch (e) {
-        if (e.status == 401) await logout();
-        // Jika jaringan bermasalah, tetap masuk dengan data kosong; akan dicoba lagi saat refresh.
+      } else if (_token != null && saved != null) {
+        _ds = RemoteDataSource(baseUrl, _token);
+        user = saved;
+        try {
+          await _loadAll(silent: true);
+        } on ApiException catch (e) {
+          if (e.status == 401) await logout();
+          // Jika jaringan bermasalah, tetap masuk dengan data kosong; akan dicoba lagi saat refresh.
+        }
+      } else {
+        _ds = RemoteDataSource(baseUrl);
       }
-    } else {
-      _ds = RemoteDataSource(baseUrl);
+    } catch (_) {
+      // Galat tak terduga saat memuat: lanjut dengan data kosong, akan dimuat ulang saat refresh.
+    } finally {
+      ready = true;
+      notifyListeners();
     }
-    ready = true;
-    notifyListeners();
   }
 
-  /// Dipanggil Splash setelah animasinya selesai.
+  /// Dipanggil Splash saat 10 detik habis atau saat pengguna mengetuk layar (lewati ke dashboard).
   void markSplashElapsed() {
+    if (splashDone) return;
     splashDone = true;
     notifyListeners();
   }
@@ -199,11 +207,24 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Merapikan dan memvalidasi alamat server. Mengembalikan alamat bersih, atau null bila tidak valid.
+  static String? normalizeBaseUrl(String input) {
+    var v = input.trim();
+    if (v.isEmpty) return AppConfig.defaultBaseUrl;
+    if (!RegExp(r'^https?://', caseSensitive: false).hasMatch(v)) v = 'http://$v';
+    v = v.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(v);
+    if (uri == null || !uri.hasAuthority || uri.host.isEmpty) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
+    if (RegExp(r'\s').hasMatch(v)) return null;
+    return v;
+  }
+
   Future<void> setBaseUrl(String url) async {
-    var v = url.trim();
-    if (v.isEmpty) v = AppConfig.defaultBaseUrl;
-    if (!v.startsWith('http')) v = 'http://$v';
-    baseUrl = v.replaceAll(RegExp(r'/+$'), '');
+    final v = normalizeBaseUrl(url);
+    if (v == null) throw ApiException('Alamat server tidak valid. Contoh: http://192.168.1.10:4000');
+    baseUrl = v;
     await _store.setBaseUrl(baseUrl);
     if (!demoMode) _ds = RemoteDataSource(baseUrl, _token);
     notifyListeners();
@@ -211,8 +232,10 @@ class AppState extends ChangeNotifier {
 
   /// Uji koneksi ke backend. Mengembalikan null jika berhasil, atau pesan galat.
   Future<String?> testConnection([String? url]) async {
+    final target = url == null ? baseUrl : normalizeBaseUrl(url);
+    if (target == null) return 'Alamat server tidak valid. Contoh: http://192.168.1.10:4000';
     try {
-      await RemoteDataSource(url ?? baseUrl).ping();
+      await RemoteDataSource(target).ping();
       return null;
     } catch (e) {
       return errorText(e);
@@ -240,6 +263,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refresh({bool silent = false}) async {
+    if (!loggedIn) return; // belum masuk: tidak ada yang perlu dimuat (hindari panggilan 401 yang sia-sia)
     try {
       await _loadAll(silent: silent);
     } on ApiException catch (e) {
@@ -248,6 +272,9 @@ class AppState extends ChangeNotifier {
         return;
       }
       if (!silent) rethrow;
+    } catch (_) {
+      // Respons tak terduga. Pembaruan otomatis (timer) tidak boleh menimbulkan galat tak tertangkap.
+      if (!silent) throw ApiException('Data dari server tidak sesuai. Pastikan versi backend cocok dengan aplikasi.');
     }
   }
 
@@ -358,6 +385,15 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> pingDevice(String petId) => _ds.pingDevice(petId);
+
+  /// Data langsung dari alat (layar Koneksi Alat).
+  Future<DeviceLive> loadDeviceLive(String petId) => _ds.getDeviceLive(petId);
+
+  /// Alat yang sudah mengirim data tetapi belum dipasangkan (mis. baru dicolok lewat USB).
+  Future<List<DiscoveredDevice>> loadDiscoveredDevices() => _ds.getDiscoveredDevices();
+
+  /// Status tautan kabel USB di server.
+  Future<UsbStatus> loadUsbStatus() => _ds.getUsbStatus();
 
   Future<void> setDeviceInterval(String petId, int sec) async {
     await _ds.setDeviceInterval(petId, sec);

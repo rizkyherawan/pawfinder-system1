@@ -17,12 +17,17 @@ const CATEGORY = {
   health_record: 'kesehatan',
 };
 
-/** Status koneksi GPS: unpaired | waiting | online | offline (berdasarkan telemetri nyata terakhir). */
+// Filter noise GPS: pergeseran kecil saat diam bukan langkah; kecepatan tinggi berarti naik kendaraan.
+const MIN_STEP_METERS = 3;
+const MAX_ACTIVITY_SPEED = 12; // m/s
+
+/** Status koneksi: unpaired | waiting | online | offline (berdasarkan paket nyata terakhir dari alat). */
 function connectionOf(pet) {
   const d = pet.device;
   if (!d || !d.paired) return 'unpaired';
   if (!d.lastSeen) return 'waiting';
-  const limitMs = Math.max(90, (d.intervalSec || 30) * 3) * 1000;
+  if (d.forceOffline) return 'offline'; // kabel USB dicabut / tautan putus
+  const limitMs = Math.max(config.offlineAfterSec, (d.intervalSec || 30) * 3) * 1000;
   return Date.now() - new Date(d.lastSeen).getTime() <= limitMs ? 'online' : 'offline';
 }
 
@@ -49,6 +54,10 @@ function petView(store, pet) {
       online: connection === 'online',
       lastSeen: d.lastSeen || null,
       intervalSec: d.intervalSec || 30,
+      // true = ada lokasi GPS valid pada paket terakhir; false = alat hidup tetapi belum mendapat satelit; null = belum ada paket
+      gpsFix: d.paired && d.lastSeen && typeof d.gpsFix === 'boolean' ? d.gpsFix : null,
+      satellites: typeof d.satellites === 'number' ? d.satellites : null,
+      source: d.paired ? (d.simulated ? 'simulator' : d.source || null) : null, // usb | http | simulator
     },
     location: pet.location || null,
     insideGeofence: pet.insideGeofence === undefined ? null : pet.insideGeofence,
@@ -84,16 +93,18 @@ function logEvent(store, e) {
 }
 
 function addStats(store, petId, movedMeters, seconds) {
+  const secs = seconds > 0 ? seconds : 0;
+  // Abaikan getaran GPS (diam) dan perpindahan terlalu cepat (kendaraan / lonjakan sinyal).
+  if (!(movedMeters > MIN_STEP_METERS)) return;
+  if (secs > 0 && movedMeters / Math.max(secs, 1) > MAX_ACTIVITY_SPEED) return;
   const key = `${petId}:${wibDateKey()}`;
   const s = store.data.stats[key] || (store.data.stats[key] = { steps: 0, distanceKm: 0, activeSec: 0 });
-  if (movedMeters > 2) {
-    s.steps += Math.round(movedMeters / 0.6);
-    s.distanceKm = Math.round((s.distanceKm + movedMeters / 1000) * 1000) / 1000;
-    s.activeSec += clamp(seconds || 5, 1, 120);
-  }
+  s.steps += Math.round(movedMeters / 0.6);
+  s.distanceKm = Math.round((s.distanceKm + movedMeters / 1000) * 1000) / 1000;
+  s.activeSec += clamp(secs || 5, 1, 120);
 }
 
-const shortAddr = (address) => String(address).split(',')[0].trim();
+const shortAddr = (address) => (String(address).startsWith('Koordinat') ? String(address) : String(address).split(',')[0].trim());
 
 /** Menyinkronkan status koneksi dan mencatat kejadian saat berubah (terhubung / terputus). */
 function syncConnection(store, pet) {
@@ -106,10 +117,11 @@ function syncConnection(store, pet) {
   if (now === 'online') {
     const first = !d.everConnected;
     d.everConnected = true;
+    const via = d.source === 'usb' ? ' lewat kabel USB' : '';
     logEvent(store, {
       userId: pet.userId, petId: pet.id, type: 'gps_connected',
       title: first ? 'GPS terhubung' : 'Koneksi GPS tersambung kembali',
-      subtitle: `${pet.name} kini dilacak secara real-time`,
+      subtitle: `${pet.name} kini dilacak secara real-time${via}`,
     });
   } else if (now === 'offline' && prev === 'online') {
     logEvent(store, { userId: pet.userId, petId: pet.id, type: 'gps_offline', title: 'Koneksi GPS terputus', subtitle: `Tidak ada sinyal dari kalung ${pet.name}` });
@@ -123,8 +135,52 @@ function syncAllConnections(store) {
   for (const pet of store.data.pets) syncConnection(store, pet);
 }
 
+/** Bagian bersama setiap paket dari alat (dengan atau tanpa lokasi): baterai, sinyal, sensor, waktu terakhir. */
+function applyStatus(pet, t, now) {
+  const d = pet.device;
+  if (typeof t.battery === 'number' && Number.isFinite(t.battery)) d.battery = clamp(Math.round(t.battery), 0, 100);
+  if (t.signal) d.signal = t.signal;
+  if (Number.isFinite(t.satellites)) d.satellites = t.satellites;
+  if (t.firmware) d.firmware = t.firmware;
+  if (t.source) d.source = t.source;
+  if (Number.isFinite(t.heartRate) || Number.isFinite(t.temperature)) {
+    pet.vitals = {
+      heartRate: Number.isFinite(t.heartRate) ? Math.round(t.heartRate) : (pet.vitals && pet.vitals.heartRate) || null,
+      temperature: Number.isFinite(t.temperature) ? Math.round(t.temperature * 10) / 10 : (pet.vitals && pet.vitals.temperature) || null,
+      updatedAt: now.toISOString(),
+    };
+  }
+  d.lastSeen = now.toISOString();
+  d.forceOffline = false;
+}
+
+/** Baterai rendah: satu pemberitahuan per siklus pengisian. */
+function checkBattery(store, pet) {
+  const d = pet.device;
+  if (typeof d.battery !== 'number') return;
+  if (d.battery <= 20 && !d.lowNotified) {
+    d.lowNotified = true;
+    logEvent(store, { userId: pet.userId, petId: pet.id, type: 'battery', title: 'Baterai perangkat rendah', subtitle: `${pet.name} · Baterai ${d.battery}% · Segera isi daya` });
+  }
+  if (d.battery > 30) d.lowNotified = false;
+}
+
 /**
- * Titik masuk semua data lokasi: dipakai oleh endpoint telemetri perangkat nyata maupun simulator.
+ * Paket tanpa lokasi: alat TERHUBUNG tetapi belum mendapat sinyal satelit (mis. di dalam ruangan).
+ * Status menjadi Online, lokasi lama tidak diubah, geofence tidak dievaluasi.
+ */
+function ingestHeartbeat(store, pet, t = {}) {
+  applyStatus(pet, t, new Date());
+  if (!t.keepFix || typeof pet.device.gpsFix !== 'boolean') pet.device.gpsFix = false;
+  syncConnection(store, pet);
+  checkBattery(store, pet);
+  store.save();
+  bus.emit('pet', { userId: pet.userId, pet: petView(store, pet) });
+  return pet;
+}
+
+/**
+ * Titik masuk semua data lokasi: dipakai oleh endpoint telemetri perangkat nyata, kabel USB, maupun simulator.
  */
 function ingestTelemetry(store, pet, t) {
   const now = new Date();
@@ -134,22 +190,23 @@ function ingestTelemetry(store, pet, t) {
   const seconds = prev ? (now - new Date(prev.updatedAt)) / 1000 : 0;
 
   pet.location = { lat: point.lat, lng: point.lng, address: reverseGeocode(point, config.home), updatedAt: now.toISOString() };
-  if (typeof t.battery === 'number') pet.device.battery = clamp(Math.round(t.battery), 0, 100);
-  if (t.signal) pet.device.signal = t.signal;
-  if (Number.isFinite(t.heartRate) || Number.isFinite(t.temperature)) {
-    pet.vitals = {
-      heartRate: Number.isFinite(t.heartRate) ? Math.round(t.heartRate) : (pet.vitals && pet.vitals.heartRate) || null,
-      temperature: Number.isFinite(t.temperature) ? Math.round(t.temperature * 10) / 10 : (pet.vitals && pet.vitals.temperature) || null,
-      updatedAt: now.toISOString(),
-    };
-  }
-  pet.device.lastSeen = now.toISOString();
+  applyStatus(pet, t, now);
+  pet.device.gpsFix = true;
   addStats(store, pet.id, moved, seconds);
   syncConnection(store, pet);
 
   // Geofence
   const fence = store.data.geofences.find((g) => g.petId === pet.id);
   if (fence) {
+    // Area bawaan (belum pernah diatur pengguna) dipusatkan ke lokasi pertama alat bila jauh dari titik bawaan,
+    // supaya alat yang dipakai di kota mana pun tidak langsung dianggap "di luar area".
+    if (fence.auto && !prev) {
+      fence.auto = false;
+      if (haversine(fence.center, point) > fence.radius * 0.5) {
+        fence.center = { lat: point.lat, lng: point.lng };
+        logEvent(store, { userId: pet.userId, petId: pet.id, type: 'geofence_updated', title: 'Area aman diatur otomatis', subtitle: `${pet.name} · Pusat area = lokasi pertama kalung (radius ${fence.radius} m). Ubah kapan saja di menu Geofence` });
+      }
+    }
     const inside = haversine(fence.center, point) <= fence.radius;
     const was = pet.insideGeofence;
     pet.insideGeofence = inside;
@@ -163,15 +220,7 @@ function ingestTelemetry(store, pet, t) {
     }
   }
 
-  // Baterai rendah (sekali per siklus pengisian)
-  if (typeof pet.device.battery === 'number') {
-    if (pet.device.battery <= 20 && !pet.device.lowNotified) {
-      pet.device.lowNotified = true;
-      logEvent(store, { userId: pet.userId, petId: pet.id, type: 'battery', title: 'Baterai perangkat rendah', subtitle: `${pet.name} · Baterai ${pet.device.battery}% · Segera isi daya` });
-    }
-    if (pet.device.battery > 30) pet.device.lowNotified = false;
-  }
-
+  checkBattery(store, pet);
   store.save();
   bus.emit('pet', { userId: pet.userId, pet: petView(store, pet) });
   return pet;
@@ -211,4 +260,4 @@ function healthSummary(store, pet) {
   };
 }
 
-module.exports = { bus, CATEGORY, connectionOf, petView, logEvent, ingestTelemetry, syncConnection, syncAllConnections, activitySummary, healthSummary, clamp };
+module.exports = { bus, CATEGORY, connectionOf, petView, logEvent, ingestTelemetry, ingestHeartbeat, syncConnection, syncAllConnections, activitySummary, healthSummary, clamp };

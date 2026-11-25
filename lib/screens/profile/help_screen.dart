@@ -5,11 +5,13 @@ import '../../widgets/common.dart';
 import '../../widgets/pressable.dart';
 
 const _faqs = [
-  ('Bagaimana cara menambahkan hewan peliharaan?', 'Buka Beranda lalu ketuk "+ Tambah Hewan Peliharaan". Pilih jenis hewan, isi nama, jenis kelamin, dan tanggal lahir (opsional), kemudian ketuk Simpan.'),
+  ('Bagaimana cara menambahkan hewan peliharaan?', 'Buka Beranda lalu ketuk "+ Tambah Hewan Peliharaan". Pilih jenis hewan, isi nama, jenis kelamin, dan tanggal lahir (wajib; perkirakan saja bila tidak tahu pastinya), kemudian ketuk Simpan.'),
   ('Bagaimana cara kerja geofencing?', 'Kamu menentukan area aman berbentuk lingkaran di sekitar rumah. Saat hewan keluar atau masuk area itu, PawFinder langsung mengirim notifikasi dan mencatatnya di Riwayat.'),
   ('Mengapa lokasi hewan terlambat diperbarui?', 'Lokasi dikirim kalung GPS sesuai interval pembaruan. Interval yang lebih pendek lebih akurat tetapi menguras baterai. Cek juga sinyal GPS dan Mode Hemat Daya pada Pengaturan.'),
   ('Berapa lama baterai kalung bertahan?', 'Daya tahan bergantung pada pemakaian dan kekuatan sinyal. Kamu akan menerima notifikasi saat baterai tinggal 20%.'),
-  ('Bagaimana jika kalung tidak terhubung?', 'Pastikan kalung menyala dan berada di area dengan jaringan. Buka Detail Perangkat untuk melihat status, sinyal, dan waktu terakhir terhubung.'),
+  ('Bagaimana jika kalung tidak terhubung?', 'Pastikan kalung menyala dan nomor seri sudah benar. Buka Detail Perangkat lalu Koneksi Alat: di sana terlihat data yang masuk secara langsung, status kabel USB di server, dan saran perbaikan otomatis.'),
+  ('Bagaimana menghubungkan kalung lewat kabel USB?', 'Colok Arduino kalung ke komputer yang menjalankan server PawFinder memakai kabel data, lalu jalankan server dengan "npm run start:usb". Buka Hubungkan GPS > tab Kabel USB: alat yang terdeteksi muncul di sana, ketuk Pasangkan. Bluetooth tidak dipakai.'),
+  ('Mengapa status Online tetapi lokasi belum muncul?', 'Alat sudah terhubung tetapi modul GPS belum mendapat sinyal satelit, biasanya karena berada di dalam ruangan. Bawa ke luar ruangan dengan langit terbuka dan tunggu 1–5 menit; lokasi terakhir tetap dipertahankan.'),
   ('Apakah data saya aman?', 'Data lokasi dikirim melalui koneksi ke server PawFinder dan hanya dapat diakses oleh akunmu.'),
 ];
 

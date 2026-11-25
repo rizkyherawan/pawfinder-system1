@@ -1,9 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pawfinder/core/constants.dart';
 import 'package:pawfinder/core/geo.dart';
 import 'package:pawfinder/core/utils.dart';
 import 'package:pawfinder/data/data_source.dart';
 import 'package:pawfinder/data/demo_data_source.dart';
 import 'package:pawfinder/data/models.dart';
+import 'package:pawfinder/state/app_state.dart';
 
 void main() {
   group('format & utilitas', () {
@@ -77,6 +79,42 @@ void main() {
       expect(pet.device.statusLabel, 'Online');
     });
 
+    test('alat online tanpa lokasi (GPS belum fix): bukan "di dalam area aman"', () {
+      final pet = Pet.fromJson({
+        'id': 'p3',
+        'name': 'Contoh',
+        'species': 'anjing',
+        'gender': 'jantan',
+        'device': {'paired': true, 'connection': 'online', 'serial': 'PF-ABC-123456', 'battery': 80, 'gpsFix': false, 'satellites': 0, 'source': 'usb'},
+        'location': null,
+        'insideGeofence': null,
+      });
+      expect(pet.device.online, true);
+      expect(pet.device.searchingSatellites, true);
+      expect(pet.device.source, 'usb');
+      expect(pet.device.sourceLabel, 'Kabel USB');
+      expect(pet.isInside, false);
+      expect(pet.isOutside, false);
+    });
+
+    test('DeviceLive, DiscoveredDevice, dan UsbStatus membaca JSON server', () {
+      final live = DeviceLive.fromJson({'paired': true, 'serial': 'PF-ABC-123456', 'connection': 'online', 'source': 'usb', 'port': 'COM3', 'packets': 12, 'ageSec': 1, 'gpsFix': true, 'locationMode': 'tetap', 'satellites': 7, 'lat': -7.71556, 'lng': 110.35547, 'battery': 80, 'heartRate': 96, 'temperature': 38.6});
+      expect(live.online, true);
+      expect(live.fixedLocation, true);
+      expect(live.lat, closeTo(-7.71556, 1e-9));
+      expect(live.heartRate, 96);
+      expect(DeviceLive.fromJson(<String, dynamic>{}).connection, 'unpaired'); // JSON kosong tidak melempar
+
+      final d = DiscoveredDevice.fromJson({'serial': 'PF-NEW-123456', 'source': 'usb', 'battery': 90, 'lastSeenSec': 3});
+      expect(d.sourceLabel, 'Kabel USB');
+
+      final usb = UsbStatus.fromJson({'enabled': true, 'state': 'connected', 'path': 'COM3', 'baud': 9600, 'lines': 40, 'parseErrors': 1, 'lastUnknown': {'line': 'abc', 'reason': 'x'}, 'lastReject': {'code': 'UNPAIRED', 'error': 'x'}, 'serials': ['PF-ABC-123456']});
+      expect(usb.connected, true);
+      expect(usb.rejectCode, 'UNPAIRED');
+      expect(usb.lastUnknown, 'abc');
+      expect(UsbStatus.fromJson({'enabled': false, 'hint': 'aktifkan'}).connected, false);
+    });
+
     test('ActivitySummary progress', () {
       final a = ActivitySummary.fromJson({'connected': true, 'steps': 2345, 'goal': 10000, 'distanceKm': 1.2, 'activeMinutes': 90, 'calories': 120, 'week': []});
       expect(a.percent, 23);
@@ -97,13 +135,31 @@ void main() {
     });
   });
 
+  group('alamat server', () {
+    test('normalizeBaseUrl merapikan dan menolak alamat yang salah', () {
+      expect(AppState.normalizeBaseUrl('192.168.1.10:4000'), 'http://192.168.1.10:4000');
+      expect(AppState.normalizeBaseUrl('  http://10.0.2.2:4000/  '), 'http://10.0.2.2:4000');
+      expect(AppState.normalizeBaseUrl('HTTPS://api.contoh.com'), 'HTTPS://api.contoh.com');
+      expect(AppState.normalizeBaseUrl('http://abc def'), isNull);
+      expect(AppState.normalizeBaseUrl('http://'), isNull);
+      expect(AppState.normalizeBaseUrl('http://host:99999'), isNull);
+      expect(AppState.normalizeBaseUrl(''), AppConfig.defaultBaseUrl); // kosong -> alamat bawaan platform
+    });
+  });
+
   group('DemoDataSource (mode demo)', () {
     test('mulai kosong; online hanya setelah sinyal pertama; riwayat = notifikasi', () async {
       final ds = DemoDataSource();
       expect(await ds.getPets(), isEmpty);
       expect(await ds.getNotifications(), isEmpty);
 
-      final pet = await ds.createPet(name: 'Contoh', species: Species.kucing, gender: 'betina');
+      // Aturan yang sama dengan backend: nama dan tanggal lahir wajib diisi.
+      await expectLater(ds.createPet(name: 'Contoh', species: Species.kucing, gender: 'betina'), throwsA(isA<ApiException>()));
+      await expectLater(ds.createPet(name: '  ', species: Species.kucing, gender: 'betina', birthDate: DateTime(2023, 1, 1)), throwsA(isA<ApiException>()));
+      await expectLater(ds.createPet(name: 'Contoh', species: Species.kucing, gender: 'betina', birthDate: DateTime.now().add(const Duration(days: 30))), throwsA(isA<ApiException>()));
+      expect(await ds.getPets(), isEmpty); // semua percobaan gagal tidak meninggalkan data
+
+      final pet = await ds.createPet(name: 'Contoh', species: Species.kucing, gender: 'betina', birthDate: DateTime(2023, 1, 1));
       expect(pet.device.connection, 'unpaired');
       expect(pet.location, isNull);
 

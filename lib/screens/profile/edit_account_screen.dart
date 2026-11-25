@@ -38,10 +38,19 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     FocusScope.of(context).unfocus();
-    final name = _name.text.trim();
+    final name = _name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (name.isEmpty) {
+      setState(() => _nameError = 'Nama wajib diisi');
+      return;
+    }
     if (name.length < 2) {
       setState(() => _nameError = 'Nama minimal 2 karakter');
+      return;
+    }
+    if (name.length > 60) {
+      setState(() => _nameError = 'Nama maksimal 60 karakter');
       return;
     }
 
@@ -76,7 +85,8 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     final tx = context.tx;
     final user = context.watch<AppState>().user;
     final displayName = user?.name.trim() ?? '';
-    final initial = displayName.isEmpty ? 'P' : displayName.substring(0, 1).toUpperCase();
+    // runes (bukan substring) agar emoji / huruf bertanda tidak terpotong menjadi karakter rusak
+    final initial = displayName.isEmpty ? 'P' : String.fromCharCode(displayName.runes.first).toUpperCase();
 
     return Scaffold(
       body: Column(

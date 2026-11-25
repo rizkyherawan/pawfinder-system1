@@ -11,6 +11,7 @@
  * Mode:
  *   circle : berputar di dalam area aman rumah
  *   exit   : berjalan menjauh dari rumah sampai keluar geofence (memicu notifikasi), lalu pulang
+ *   nofix  : alat hidup tetapi belum dapat sinyal GPS (tanpa koordinat)
  */
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, arr) => (v.startsWith('--') ? [...a, [v.slice(2), arr[i + 1]]] : a), []));
 const base = (args.url || 'http://localhost:4000').replace(/\/$/, '');
@@ -30,6 +31,7 @@ let t = 0, battery = Number(args.battery || 80);
 
 function position() {
   t += 1;
+  if (mode === 'nofix') return null;
   if (mode === 'circle') {
     const r = 80;
     return { lat: HOME.lat + (r / M_PER_DEG) * Math.sin(t / 6), lng: HOME.lng + (r / M_PER_DEG) * Math.cos(t / 6) };
@@ -43,14 +45,15 @@ function position() {
 async function send() {
   const p = position();
   if (t % 15 === 0) battery = Math.max(5, battery - 1);
+  const payload = p ? { serial, lat: p.lat, lng: p.lng, battery, signal: 'Kuat' } : { serial, fix: 0, battery, signal: 'Kuat' };
   try {
     const res = await fetch(`${base}/api/device/telemetry`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-device-key': key },
-      body: JSON.stringify({ serial, lat: p.lat, lng: p.lng, battery, signal: 'Kuat' }),
+      body: JSON.stringify(payload),
     });
     const body = await res.json();
-    console.log(`#${t} ${p.lat.toFixed(5)},${p.lng.toFixed(5)} bat=${battery}% -> ${res.status} ${body.error || (body.insideGeofence ? 'di dalam area aman' : 'DI LUAR area aman')}`);
+    console.log(`#${t} ${p ? `${p.lat.toFixed(5)},${p.lng.toFixed(5)}` : 'tanpa GPS'} bat=${battery}% -> ${res.status} ${body.error || (!p ? 'alat hidup, belum fix' : body.insideGeofence ? 'di dalam area aman' : 'DI LUAR area aman')}`);
   } catch (e) {
     console.error('Gagal terhubung:', e.message);
   }

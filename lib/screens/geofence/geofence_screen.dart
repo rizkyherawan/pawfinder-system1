@@ -32,6 +32,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
   Geofence? _saved;
   double _initialRadius = 500; // dipakai hanya untuk zoom awal peta
   bool _loading = false, _saving = false;
+  String? _error; // galat memuat geofence: ditampilkan beserta tombol "Coba Lagi" (dulu spinner berputar selamanya)
 
   bool get _dirty {
     final a = _fence, b = _saved;
@@ -49,6 +50,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
       _petId = petId;
       _loading = true;
       _fence = null;
+      _error = null;
     });
     try {
       final g = await context.read<AppState>().loadGeofence(petId);
@@ -60,15 +62,17 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      showToast(context, errorText(e), kind: ToastKind.error);
+      if (!mounted || _petId != petId) return;
+      setState(() {
+        _loading = false;
+        _error = errorText(e);
+      });
     }
   }
 
   Future<void> _save() async {
     final g = _fence;
-    if (g == null) return;
+    if (g == null || _saving) return;
     setState(() => _saving = true);
     try {
       final saved = await context.read<AppState>().saveGeofence(g);
@@ -116,7 +120,21 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                         child: Stack(children: [
                           Positioned.fill(
                             child: _fence == null
-                                ? Container(color: p.primaryLight, child: const Center(child: PFSpinner()))
+                                ? Container(
+                                    color: p.primaryLight,
+                                    child: Center(
+                                      child: _error == null
+                                          ? const PFSpinner()
+                                          : Padding(
+                                              padding: const EdgeInsets.all(20),
+                                              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                                Text(_error!, textAlign: TextAlign.center, style: tx.caption),
+                                                const SizedBox(height: 10),
+                                                PFButton(label: 'Coba Lagi', kind: PFButtonKind.secondary, expand: false, onPressed: () => _load(pet.id)),
+                                              ]),
+                                            ),
+                                    ),
+                                  )
                                 : PawMap(
                                     key: ValueKey('${pet.id}-${s.settings.mapProvider}-${_saved?.center.lat}-${_saved?.center.lng}'),
                                     controller: _map,
@@ -240,7 +258,7 @@ class _GpsCard extends StatelessWidget {
     final tx = context.tx;
     final d = pet.device;
     final info = switch (d.connection) {
-      'online' => 'Kalung ${d.serial} aktif · baterai ${d.battery ?? '—'}% · sinyal ${d.signal ?? '—'}.',
+      'online' => d.searchingSatellites ? 'Kalung ${d.serial} aktif (${d.sourceLabel}), tetapi belum mendapat sinyal satelit GPS. Geofence aktif setelah lokasi diterima.' : 'Kalung ${d.serial} aktif · ${d.sourceLabel} · baterai ${d.battery ?? '—'}% · sinyal ${d.signal ?? '—'}.',
       'waiting' => 'Kalung ${d.serial} dipasangkan. Menunggu sinyal pertama dari kalung…',
       'offline' => 'Tidak ada sinyal dari kalung ${d.serial}. Pastikan kalung menyala dan berada di area jaringan.',
       _ => 'Geofence baru memantau ${pet.name} setelah kalung GPS terhubung.',

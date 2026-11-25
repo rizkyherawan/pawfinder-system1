@@ -68,7 +68,7 @@ class DemoDataSource implements DataSource {
           address: kHomeAddress,
           locationUpdatedAt: now,
           insideGeofence: true,
-          device: p.device.copyWith(connection: 'online', battery: 100, signal: 'Kuat', lastSeen: now),
+          device: p.device.copyWith(connection: 'online', battery: 100, signal: 'Kuat', lastSeen: now, gpsFix: true, satellites: 7, source: 'simulator'),
         );
         final firstTime = _everOnline[p.id] != true;
         _everOnline[p.id] = true;
@@ -112,7 +112,7 @@ class DemoDataSource implements DataSource {
         address: distanceMeters(next, _home) < 60 ? kHomeAddress : 'Sekitar ${p.geofenceName}',
         locationUpdatedAt: now,
         insideGeofence: inside,
-        device: p.device.copyWith(battery: battery, lastSeen: now, connection: 'online'),
+        device: p.device.copyWith(battery: battery, lastSeen: now, connection: 'online', gpsFix: true, satellites: 6 + _rand.nextInt(4)),
       );
     }
   }
@@ -126,6 +126,11 @@ class DemoDataSource implements DataSource {
 
   @override
   Future<Pet> createPet({required String name, required Species species, required String gender, DateTime? birthDate, int avatarColor = 0}) async {
+    // Aturan yang sama dengan backend, agar perilaku demo dan server tidak berbeda.
+    if (name.trim().isEmpty) throw ApiException('Nama hewan wajib diisi', status: 422, field: 'name');
+    if (name.trim().length > 30) throw ApiException('Nama hewan maksimal 30 karakter', status: 422, field: 'name');
+    if (birthDate == null) throw ApiException('Tanggal lahir wajib diisi', status: 422, field: 'birthDate');
+    if (birthDate.isAfter(DateTime.now().add(const Duration(days: 1)))) throw ApiException('Tanggal lahir tidak boleh di masa depan', status: 422, field: 'birthDate');
     final pet = Pet(id: _id('pet'), name: name.trim(), species: species, gender: gender, birthDate: birthDate, avatarColor: avatarColor, device: const DeviceInfo());
     _pets.add(pet);
     _fences[pet.id] = Geofence(petId: pet.id, center: _home, radius: 500);
@@ -136,6 +141,9 @@ class DemoDataSource implements DataSource {
 
   @override
   Future<Pet> updatePet(Pet pet) async {
+    if (pet.name.trim().isEmpty) throw ApiException('Nama hewan wajib diisi', status: 422, field: 'name');
+    if (pet.name.trim().length > 30) throw ApiException('Nama hewan maksimal 30 karakter', status: 422, field: 'name');
+    if (pet.birthDate == null) throw ApiException('Tanggal lahir wajib diisi', status: 422, field: 'birthDate');
     final i = _idx(pet.id);
     final old = _pets[i];
     _pets[i] = old.copyWith(name: pet.name, species: pet.species, gender: pet.gender, birthDate: pet.birthDate, clearBirth: pet.birthDate == null, avatarColor: pet.avatarColor);
@@ -211,8 +219,42 @@ class DemoDataSource implements DataSource {
   Future<String> pingDevice(String petId) async {
     final pet = _pets[_idx(petId)];
     if (!pet.device.paired) throw ApiException('Kalung belum terhubung', status: 409);
-    return 'Kalung ${pet.name} berbunyi selama 10 detik';
+    if (!pet.device.online) throw ApiException('Kalung sedang offline, tidak dapat dibunyikan', status: 409);
+    return 'Perintah bunyi dikirim ke kalung ${pet.name}';
   }
+
+  @override
+  Future<DeviceLive> getDeviceLive(String petId) async {
+    final p = _pets[_idx(petId)];
+    final s = _sensor[petId];
+    final seen = p.device.lastSeen;
+    return DeviceLive(
+      paired: p.device.paired,
+      serial: p.device.serial,
+      connection: p.device.connection,
+      source: p.device.paired ? 'simulator' : null,
+      packets: seen == null ? 0 : 1,
+      lastPacketAt: seen,
+      ageSec: seen == null ? null : DateTime.now().difference(seen).inSeconds,
+      gpsFix: p.device.gpsFix,
+      locationMode: p.location == null ? null : 'gps',
+      satellites: p.device.satellites,
+      lat: p.location?.lat,
+      lng: p.location?.lng,
+      address: p.address.isEmpty ? null : p.address,
+      battery: p.device.battery,
+      signal: p.device.signal,
+      heartRate: s?.heartRate,
+      temperature: s?.temperature,
+      firmware: p.device.firmware,
+    );
+  }
+
+  @override
+  Future<List<DiscoveredDevice>> getDiscoveredDevices() async => const [];
+
+  @override
+  Future<UsbStatus> getUsbStatus() async => const UsbStatus(enabled: false, hint: 'Mode demo memakai data simulasi di dalam aplikasi. Untuk alat nyata, keluar dari mode demo lalu masuk dengan akun yang terhubung ke server.');
 
   // ---------- Geofence ----------
   @override

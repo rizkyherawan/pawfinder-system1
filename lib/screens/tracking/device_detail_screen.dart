@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/routes.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../data/data_source.dart';
@@ -14,6 +15,7 @@ import '../../widgets/pair_sheet.dart';
 import '../../widgets/pet_art.dart';
 import '../../widgets/pet_face.dart';
 import '../../widgets/pressable.dart';
+import 'device_connection_screen.dart';
 
 /// Batang sinyal GPS (0-4 batang).
 class SignalBars extends StatelessWidget {
@@ -65,7 +67,7 @@ class DeviceDetailScreen extends StatelessWidget {
               }
             },
           ),
-          if (pet.device.online) ...[
+          if (s.petById(pet.id)?.device.online ?? false) ...[
             const SizedBox(height: 20),
             PFButton(
               label: 'Bunyikan Kalung',
@@ -115,7 +117,7 @@ class DeviceDetailScreen extends StatelessWidget {
     final d = pet.device;
     final street = pet.address.split(',').take(2).join(',').trim();
     final subtitle = switch (d.connection) {
-      'online' => 'Terhubung via IoT · ${updatedAgo(d.lastSeen)}',
+      'online' => d.searchingSatellites ? 'Terhubung via ${d.sourceLabel} · mencari satelit GPS' : 'Terhubung via ${d.sourceLabel} · ${updatedAgo(d.lastSeen)}',
       'waiting' => 'Menunggu sinyal pertama dari kalung',
       'offline' => 'Terakhir terlihat ${updatedAgo(d.lastSeen).toLowerCase()}',
       _ => 'Kalung belum dipasangkan',
@@ -153,7 +155,7 @@ class DeviceDetailScreen extends StatelessWidget {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [Icon(Icons.link_off_rounded, color: p.textSecondary), const SizedBox(width: 10), Text('GPS belum terhubung', style: tx.h3)]),
                       const SizedBox(height: 8),
-                      Text('Status baru menjadi aktif (hijau) setelah kalung dipasangkan dan benar-benar mengirim sinyal. Siapkan nomor seri yang tertera pada kalung.', style: tx.bodySecondary.copyWith(fontSize: 14)),
+                      Text('Status baru menjadi aktif (hijau) setelah kalung dipasangkan dan benar-benar mengirim sinyal. Hubungkan lewat nomor seri (ID) alat atau lewat kabel USB.', style: tx.bodySecondary.copyWith(fontSize: 14)),
                       const SizedBox(height: 16),
                       PFButton(label: 'Hubungkan GPS', icon: Icons.link_rounded, onPressed: () => showPairSheet(context, pet)),
                     ]),
@@ -166,6 +168,13 @@ class DeviceDetailScreen extends StatelessWidget {
                       const SizedBox(height: 14),
                       _Row(icon: SignalBars(signal: d.signal), label: 'Sinyal GPS', value: d.signal ?? '—', valueColor: p.primaryText),
                       const SizedBox(height: 14),
+                      _Row(
+                        icon: Icon(Icons.satellite_alt_outlined, size: 22, color: p.textSecondary),
+                        label: 'Satelit GPS',
+                        value: d.gpsFix == null ? '—' : (d.gpsFix! ? '${d.satellites ?? '-'} satelit' : 'Mencari…'),
+                        valueColor: d.gpsFix == false ? PF.warning : p.primaryText,
+                      ),
+                      const SizedBox(height: 14),
                       Divider(height: 1, color: p.border),
                       const SizedBox(height: 12),
                       Text(pet.location == null ? 'Lokasi terakhir · belum ada' : 'Lokasi terakhir · ${street.isEmpty ? '-' : street}', style: tx.caption),
@@ -175,6 +184,8 @@ class DeviceDetailScreen extends StatelessWidget {
                   PFCard(
                     padding: const EdgeInsets.all(18),
                     child: Column(children: [
+                      _KV(label: 'Jalur data', value: d.sourceLabel),
+                      const SizedBox(height: 14),
                       _KV(label: 'Firmware', value: d.firmware),
                       const SizedBox(height: 14),
                       Pressable(
@@ -189,6 +200,8 @@ class DeviceDetailScreen extends StatelessWidget {
                     ]),
                   ),
                   const SizedBox(height: 22),
+                  PFButton(label: 'Koneksi Alat (monitor langsung)', icon: Icons.usb, onPressed: () => pushPage<void>(context, DeviceConnectionScreen(petId: pet.id))),
+                  const SizedBox(height: 10),
                   PFButton(label: 'Pengaturan', icon: Icons.tune_rounded, kind: PFButtonKind.secondary, pill: false, onPressed: () => _settings(context, pet)),
                   const SizedBox(height: 6),
                   PFButton(label: 'Putuskan GPS', icon: Icons.link_off_rounded, kind: PFButtonKind.text, onPressed: () => _unpair(context, pet)),

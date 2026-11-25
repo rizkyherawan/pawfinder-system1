@@ -16,8 +16,16 @@ class RemoteDataSource implements DataSource {
   final String? token;
   static const _timeout = Duration(seconds: 12);
 
+  Uri _uri(String path) {
+    try {
+      return Uri.parse('$baseUrl$path');
+    } on FormatException {
+      throw ApiException('Alamat server tidak valid: $baseUrl');
+    }
+  }
+
   Future<Map<String, dynamic>> _send(String method, String path, {Object? body}) async {
-    final uri = Uri.parse('$baseUrl$path');
+    final uri = _uri(path);
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -49,14 +57,22 @@ class RemoteDataSource implements DataSource {
     }
 
     var data = <String, dynamic>{};
+    var jsonObject = false;
     if (res.bodyBytes.isNotEmpty) {
       try {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-        if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+        if (decoded is Map) {
+          data = Map<String, dynamic>.from(decoded);
+          jsonObject = true;
+        }
       } catch (_) {}
     }
     if (res.statusCode >= 400) {
       throw ApiException('${data['error'] ?? 'Terjadi kesalahan (${res.statusCode})'}', status: res.statusCode, field: data['field']?.toString());
+    }
+    if (res.bodyBytes.isNotEmpty && !jsonObject) {
+      // Berhasil (2xx) tetapi bukan JSON: alamat server kemungkinan menunjuk ke program lain, bukan backend PawFinder.
+      throw ApiException('Respons server tidak dikenali. Pastikan alamat menunjuk ke backend PawFinder.', status: res.statusCode);
     }
     return data;
   }
@@ -142,6 +158,16 @@ class RemoteDataSource implements DataSource {
 
   @override
   Future<String> pingDevice(String petId) async => '${(await _send('POST', '/api/pets/$petId/device/ping'))['message'] ?? 'Kalung dibunyikan'}';
+
+  @override
+  Future<DeviceLive> getDeviceLive(String petId) async =>
+      DeviceLive.fromJson(Map<String, dynamic>.from((await _send('GET', '/api/pets/$petId/device/live'))['live'] as Map));
+
+  @override
+  Future<List<DiscoveredDevice>> getDiscoveredDevices() async => _maps((await _send('GET', '/api/devices/discovered'))['devices']).map(DiscoveredDevice.fromJson).toList();
+
+  @override
+  Future<UsbStatus> getUsbStatus() async => UsbStatus.fromJson(Map<String, dynamic>.from((await _send('GET', '/api/usb/status'))['usb'] as Map));
 
   // ---------- Geofence ----------
   @override

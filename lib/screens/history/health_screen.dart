@@ -206,7 +206,7 @@ class _RecordFormState extends State<_RecordForm> {
   final _title = TextEditingController();
   final _note = TextEditingController();
   DateTime _date = DateTime.now();
-  String? _error;
+  String? _error, _valueErr, _titleErr;
   bool _saving = false;
 
   @override
@@ -218,22 +218,30 @@ class _RecordFormState extends State<_RecordForm> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     FocusScope.of(context).unfocus();
     final isWeight = _type == 0;
     double? value;
     if (isWeight) {
-      value = double.tryParse(_value.text.trim().replaceAll(',', '.'));
+      final raw = _value.text.trim();
+      if (raw.isEmpty) {
+        setState(() => _valueErr = 'Berat wajib diisi');
+        return;
+      }
+      value = double.tryParse(raw.replaceAll(',', '.'));
       if (value == null || value <= 0 || value > 200) {
-        setState(() => _error = 'Masukkan berat yang valid (0,1 – 200 kg)');
+        setState(() => _valueErr = 'Masukkan berat yang valid (0,1 – 200 kg)');
         return;
       }
     } else if (_title.text.trim().isEmpty) {
-      setState(() => _error = 'Judul catatan wajib diisi');
+      setState(() => _titleErr = 'Judul catatan wajib diisi');
       return;
     }
     setState(() {
       _saving = true;
       _error = null;
+      _valueErr = null;
+      _titleErr = null;
     });
     final app = context.read<AppState>();
     try {
@@ -256,6 +264,8 @@ class _RecordFormState extends State<_RecordForm> {
       PFSegmented(items: const ['Berat', 'Vaksin', 'Obat', 'Catatan'], index: _type, onChanged: (i) => setState(() {
             _type = i;
             _error = null;
+            _valueErr = null;
+            _titleErr = null;
           })),
       const SizedBox(height: 16),
       if (_type == 0)
@@ -263,12 +273,18 @@ class _RecordFormState extends State<_RecordForm> {
           label: 'Berat (kg)',
           hint: 'mis. 4,5',
           controller: _value,
+          errorText: _valueErr,
+          onChanged: (_) {
+            if (_valueErr != null) setState(() => _valueErr = null);
+          },
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
           prefixIcon: Icons.monitor_weight_outlined,
         )
       else
-        PFTextField(label: 'Judul', hint: _type == 1 ? 'mis. Vaksin rabies' : (_type == 2 ? 'mis. Obat cacing' : 'mis. Kontrol dokter hewan'), controller: _title, maxLength: 60, textCapitalization: TextCapitalization.sentences, prefixIcon: Icons.edit_outlined),
+        PFTextField(label: 'Judul', hint: _type == 1 ? 'mis. Vaksin rabies' : (_type == 2 ? 'mis. Obat cacing' : 'mis. Kontrol dokter hewan'), controller: _title, errorText: _titleErr, onChanged: (_) {
+          if (_titleErr != null) setState(() => _titleErr = null);
+        }, maxLength: 60, textCapitalization: TextCapitalization.sentences, prefixIcon: Icons.edit_outlined),
       const SizedBox(height: 14),
       PFDateField(label: 'Tanggal', value: _date, hint: 'Pilih tanggal', firstDate: DateTime(DateTime.now().year - 20), onChanged: (d) => setState(() => _date = d)),
       const SizedBox(height: 14),
