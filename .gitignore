@@ -69,3 +69,7 @@ backend/data/photos/
 *.jks
 *.keystore
 *.p12
+
+# Backup and Vercel local files
+*.bak
+.vercel/

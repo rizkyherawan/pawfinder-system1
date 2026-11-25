@@ -28,8 +28,8 @@ const isFiniteNum = (v) => typeof v === 'number' && Number.isFinite(v);
 module.exports = function register(router) {
   const store = router.store;
   const photos = createPhotoStore(store);
-  const loginLimiter = new RateLimiter({ max: 5, windowMs: 10 * 60 * 1000 });   // gagal login per IP+email
-  const registerLimiter = new RateLimiter({ max: 20, windowMs: 60 * 60 * 1000 }); // pendaftaran per IP
+  const loginLimiter = new RateLimiter({ max: 5, windowMs: 10 * 60 * 1000, storage: store.rateLimits || null, namespace: 'login' });   // gagal login per IP+email
+  const registerLimiter = new RateLimiter({ max: 20, windowMs: 60 * 60 * 1000, storage: store.rateLimits || null, namespace: 'register' }); // pendaftaran per IP
 
   const ownPet = (ctx) => {
     const pet = store.data.pets.find((p) => p.id === ctx.params.id && p.userId === ctx.user.id);
@@ -313,6 +313,7 @@ module.exports = function register(router) {
 
   // ---------- Status kabel USB ----------
   router.get('/api/usb/status', async () => {
+    if (store.photoStore) return { usb: { enabled: false, driver: false, hint: 'USB tidak tersedia pada serverless.' } };
     const link = store.runtime.usb;
     const { driver } = createOpener();
     if (!link) return { usb: { enabled: false, driver, hint: 'Aktifkan dengan USB_PORT=auto di backend/.env lalu jalankan ulang server (atau npm run start:usb).' } };
@@ -320,6 +321,7 @@ module.exports = function register(router) {
   });
 
   router.get('/api/usb/ports', async () => {
+    if (store.photoStore) return { ports: [] };
     try { return { ports: await listPorts() }; }
     catch (e) { return { ports: [], error: e.message }; }
   });
@@ -492,6 +494,7 @@ module.exports = function register(router) {
 
   // ---------- Live stream (Server-Sent Events) ----------
   router.get('/api/stream', (ctx) => {
+    if (store.photoStore) throw new HttpError(501, 'Live stream tidak tersedia pada serverless. Gunakan polling.');
     const { req, res, user } = ctx;
     res.writeHead(200, {
       'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
